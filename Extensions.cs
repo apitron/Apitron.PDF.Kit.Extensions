@@ -157,6 +157,28 @@ namespace Apitron.PDF.Kit
         /// <param name="outputFilePath">Output file path, optional. If not set, incremental save will be performed.</param>
         public static void Watermark(this FixedDocument doc, string pathToWatermarkImage, string outputFilePath=null)
         {
+            // save to specified file or do an incremental update
+            if (!string.IsNullOrEmpty(outputFilePath))
+            {
+                using (Stream outputStream = File.Create(outputFilePath))
+                {
+                    Watermark(doc,pathToWatermarkImage,outputStream);
+                }
+            }
+            else
+            {
+                Watermark(doc,pathToWatermarkImage,outputFilePath);
+            }
+        }
+
+        /// <summary>
+        /// Adds a watermark on all pages of the specified document.
+        /// </summary>
+        /// <param name="doc">Document to process.</param>
+        /// <param name="pathToWatermarkImage">Path to image to be used as watermark.</param>
+        /// <param name="outputStream">Output stream, optional. If not set, incremental save will be performed.</param>
+        public static void Watermark(this FixedDocument doc, string pathToWatermarkImage, Stream outputStream=null)
+        {
             if (doc == null)
             {
                 throw new ArgumentNullException(nameof(doc));
@@ -182,12 +204,9 @@ namespace Apitron.PDF.Kit
             }
 
             // save to specified file or do an incremental update
-            if (!string.IsNullOrEmpty(outputFilePath))
+            if (outputStream!=null)
             {
-                using (Stream outputStream = File.Create(outputFilePath))
-                {
-                    doc.Save(outputStream);
-                }
+                doc.Save(outputStream);
             }
             else
             {
