@@ -15,10 +15,17 @@ using Apitron.PDF.Kit.FixedLayout.Resources.XObjects;
 using System;
 using System.Data.Common;
 using System.IO;
+using Apitron.PDF.Kit.FixedLayout.Resources.GraphicsStates;
+using Apitron.PDF.Kit.FlowLayout;
+using Apitron.PDF.Kit.FlowLayout.Content;
 using Apitron.PDF.Kit.Interactive.Annotations;
 using Apitron.PDF.Kit.Interactive.Forms;
 using Apitron.PDF.Kit.Interactive.Forms.Signature;
 using Apitron.PDF.Kit.Interactive.Forms.SignatureSettings;
+using Apitron.PDF.Kit.Styles;
+using Apitron.PDF.Kit.Styles.Appearance;
+using Apitron.PDF.Kit.Styles.Text;
+using Image = Apitron.PDF.Kit.FixedLayout.Resources.XObjects.Image;
 
 namespace Apitron.PDF.Kit
 {
@@ -150,6 +157,100 @@ namespace Apitron.PDF.Kit
         }
 
         /// <summary>
+        /// Adds a textual watermark on all pages of the specified document.
+        /// </summary>
+        /// <param name="doc">Document to process.</param>
+        /// <param name="watermarkText">Watermark text.</param>
+        /// <param name="outputFilePath">Output file path, optional. If not set, incremental save will be performed.</param>
+        public static void WatermarkText(this FixedDocument doc, string watermarkText, string outputFilePath = null)
+        {
+            // save to specified file or do an incremental update
+            if (!string.IsNullOrEmpty(outputFilePath))
+            {
+                using (Stream outputStream = File.Create(outputFilePath))
+                {
+                    WatermarkText(doc, watermarkText, outputStream);
+                }
+            }
+            else
+            {
+                WatermarkText(doc, watermarkText, outputFilePath);
+            }
+        }
+
+        /// <summary>
+        /// Adds a watermark on all pages of the specified document.
+        /// </summary>
+        /// <param name="doc">Document to process.</param>
+        /// <param name="watermarkText">Watermark text.</param>
+        /// <param name="outputStream">Output stream, optional. If not set, incremental save will be performed.</param>
+        public static void WatermarkText(this FixedDocument doc, string watermarkText, Stream outputStream=null)
+        {
+            if (doc == null)
+            {
+                throw new ArgumentNullException(nameof(doc));
+            }
+
+            if (string.IsNullOrEmpty(watermarkText))
+            {
+                throw new ArgumentException("Value cannot be null or empty.", nameof(watermarkText));
+            }
+
+           
+            // register graphics state that sets transparency level for content
+            GraphicsState gsTransparency = new GraphicsState("gsTransparency");
+            gsTransparency.CurrentNonStrokingAlpha = 0.3;
+            gsTransparency.CurrentStrokingAlpha = 0.3;
+            doc.ResourceManager.RegisterResource(gsTransparency);
+
+            // create watermark content template using given text
+            double fontSizeInPoints = 20;
+            double padding = 10;
+            double borderThickness = 2;
+
+            double totalAddedSpace = (padding + borderThickness) * 2;
+
+            TextBlock watermarkTextBlock = new TextBlock(watermarkText)
+            {
+                Font = new Font("Times New Roman", fontSizeInPoints),
+                Color = RgbColors.Red,
+                Padding = new Thickness(padding),
+                BorderColor = RgbColors.Red,
+                Border = new Border(borderThickness),
+                BorderRadius = 5,
+                Background = RgbColors.Pink
+            };
+
+            double textBlockWidth = watermarkTextBlock.Measure(doc.ResourceManager) + totalAddedSpace;
+            double textBlockHeight = fontSizeInPoints + totalAddedSpace + 10;
+
+            FixedContent watermarkContent = new FixedContent(Guid.NewGuid().ToString("N"), new Boundary(textBlockWidth, textBlockHeight));
+            watermarkContent.Content.SetGraphicsState(gsTransparency.ID);
+            watermarkContent.Content.AppendContentElement(watermarkTextBlock, textBlockWidth, textBlockHeight);
+
+            // register watermark XObject it will be referenced in all watermark annotations
+            doc.ResourceManager.RegisterResource(watermarkContent);
+
+            // add annotations to every page
+            foreach (Page page in doc.Pages)
+            {
+                WatermarkAnnotation watermarkAnnotation = CreateWatermarkAnnotation(page.Boundary.MediaBox, watermarkContent,true);
+                doc.ResourceManager.RegisterResource(watermarkAnnotation.Watermark);
+                page.Annotations.Add(watermarkAnnotation);
+            }
+
+            // save to specified file or do an incremental update
+            if (outputStream != null)
+            {
+                doc.Save(outputStream);
+            }
+            else
+            {
+                doc.Save();
+            }
+        }
+
+        /// <summary>
         /// Adds a watermark on all pages of the specified document.
         /// </summary>
         /// <param name="doc">Document to process.</param>
@@ -179,14 +280,38 @@ namespace Apitron.PDF.Kit
         /// <param name="outputStream">Output stream, optional. If not set, incremental save will be performed.</param>
         public static void Watermark(this FixedDocument doc, string pathToWatermarkImage, Stream outputStream=null)
         {
+            if (!File.Exists(pathToWatermarkImage))
+            {
+                throw new FileNotFoundException("The image data file is not found", pathToWatermarkImage);
+            }
+
+            using (Stream imageDataStream = File.OpenRead(pathToWatermarkImage))
+            {
+                Watermark(doc, imageDataStream, outputStream);
+            }
+        }
+
+        /// <summary>
+        /// Adds a watermark on all pages of the specified document.
+        /// </summary>
+        /// <param name="doc">Document to process.</param>
+        /// <param name="imageDataStream">Stream containing image data to be used as watermark. Caller is reposible for closing it.</param>
+        /// <param name="outputStream">Output stream, optional. If not set, incremental save will be performed. Caller is responsible for closing it.</param>
+        public static void Watermark(this FixedDocument doc, Stream imageDataStream, Stream outputStream = null)
+        {
             if (doc == null)
             {
                 throw new ArgumentNullException(nameof(doc));
             }
 
+            if (imageDataStream == null)
+            {
+                throw new ArgumentNullException(nameof(imageDataStream));
+            }
+
             // create and register image resource
             string imageResourceId = Guid.NewGuid().ToString("N");
-            Image imageResource = new Image(imageResourceId, pathToWatermarkImage);
+            Image imageResource = new Image(imageResourceId, imageDataStream);
             doc.ResourceManager.RegisterResource(imageResource);
 
             // register watermark XObject it will be referenced in all watermark annotations
@@ -204,7 +329,7 @@ namespace Apitron.PDF.Kit
             }
 
             // save to specified file or do an incremental update
-            if (outputStream!=null)
+            if (outputStream != null)
             {
                 doc.Save(outputStream);
             }
@@ -219,17 +344,40 @@ namespace Apitron.PDF.Kit
         /// </summary>
         /// <param name="pageBoundary">Targer page boundary.</param>
         /// <param name="watermarkXobject">XObject containing visual content for the watermark.</param>
+        /// <param name="rotated">Indicates that watermark object should be rotated and aligned between the lower left and upper right corners.</param>
         /// <returns>Initialized watermarp annotation.</returns>
         private static WatermarkAnnotation CreateWatermarkAnnotation(Boundary pageBoundary,
-            FixedContent watermarkXobject)
+            FixedContent watermarkXobject, bool rotated=false)
         {
             // create watermark content XObject and reference existing "real" watermark XObject containing content
             FixedContent watermarkStub = new FixedContent(Guid.NewGuid().ToString("N"), pageBoundary);
-            watermarkStub.Content.AppendXObject(watermarkXobject.ID,
-                (watermarkStub.Boundary.Width - watermarkXobject.Boundary.Width)/2.0,
-                (watermarkStub.Boundary.Height - watermarkXobject.Boundary.Height)/2.0);
 
-            // create annotation and wire its the visual part
+            if (rotated)
+            {
+                // calculate rotation angle
+                double alpha = Math.Atan(watermarkStub.Boundary.Height/watermarkStub.Boundary.Width);
+                double beta = Math.PI/2.0 - alpha;
+
+                double centeringDelta = watermarkXobject.Boundary.Height*Math.Cos(beta);
+
+                double rotatedWidth = watermarkXobject.Boundary.Width*Math.Cos(alpha) + centeringDelta;
+                double rotatedHeight = watermarkXobject.Boundary.Width*Math.Sin(alpha) + watermarkXobject.Boundary.Height*Math.Sin(beta);
+
+                watermarkStub.Content.SaveGraphicsState();
+                watermarkStub.Content.Translate(centeringDelta+(watermarkStub.Boundary.Width - rotatedWidth)/2.0,
+                    (watermarkStub.Boundary.Height - rotatedHeight)/2.0);
+                watermarkStub.Content.SetRotate(alpha);
+                watermarkStub.Content.AppendXObject(watermarkXobject.ID, 0, 0);
+                watermarkStub.Content.RestoreGraphicsState();
+            }
+            else
+            {
+                watermarkStub.Content.AppendXObject(watermarkXobject.ID, (watermarkStub.Boundary.Width - watermarkXobject.Boundary.Width) / 2.0, 
+                    (watermarkStub.Boundary.Height - watermarkXobject.Boundary.Height) / 2.0);
+                watermarkStub.Content.RestoreGraphicsState();
+            }
+
+            // create annotation and wire its visual part
             WatermarkAnnotation annotation = new WatermarkAnnotation(pageBoundary);
             annotation.Watermark = watermarkStub;
 

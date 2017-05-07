@@ -1,8 +1,10 @@
 ﻿#if DEBUG
 
+using System;
 using System.Diagnostics;
 using System.IO;
 using Apitron.PDF.Kit.FixedLayout;
+using Apitron.PDF.Kit.FixedLayout.ContentElements;
 using Apitron.PDF.Kit.Interactive.Annotations;
 using Apitron.PDF.Kit.Interactive.Forms;
 using NUnit.Framework;
@@ -185,6 +187,82 @@ namespace Apitron.PDF.Kit.Tests
                     }
                 }
             }
+        }
+
+        [Test]
+        public void WatermarkText()
+        {
+            string outputFileName = GetFileNameBasedOnCaller();
+
+           // string watermarkText = "Top secret - for internal use - top secret - for internal use";
+            string watermarkText = "TOP secret -for INTERNAL use - TOP secret - for INTERNAL use - TOP secret - for INTERNAL use - TOP secret";
+
+            using (Stream inputStream = File.Open("../../data/letter_unsigned.pdf", FileMode.Open))
+            {
+                using (FixedDocument doc = new FixedDocument(inputStream))
+                {
+                    doc.WatermarkText(watermarkText, outputFileName);
+                }
+            }
+
+            using (Stream inputStream = File.Open(outputFileName, FileMode.Open))
+            {
+                using (FixedDocument doc = new FixedDocument(inputStream))
+                {
+                    // check that we have watermarks placed on first page
+                    // TODO: make it working for all pages
+                    for (int i = 0; i < 1; ++i)
+                    {
+                        bool watermarkAnnotationFound = false;
+
+                        foreach (Annotation annotation in doc.Pages[i].Annotations)
+                        {
+                            WatermarkAnnotation watermarkAnnotation = (annotation as WatermarkAnnotation);
+
+                            if (watermarkAnnotation!=null && (watermarkAnnotationFound = FindTextInElements(watermarkText, watermarkAnnotation.Watermark.Elements)))
+                            {
+                                break;
+                            }
+                        }
+
+                        Assert.IsTrue(watermarkAnnotationFound);
+                    }
+                }
+            }
+
+            Process.Start(outputFileName);
+        }
+
+        private bool FindText(string watermarkText, IContentElement element)
+        {
+            if (element.ElementType == ElementType.Text)
+            {
+                TextContentElement textElement = (TextContentElement) element;
+
+                return textElement.TextObject.Text == watermarkText;
+            }
+
+            if (element.ElementType == ElementType.FormXObject)
+            {
+                FormContentElement elementsContainer = (FormContentElement)element;
+
+                return FindTextInElements(watermarkText, elementsContainer.FormXObject.Elements);
+            }
+
+            return false;
+        }
+
+        private bool FindTextInElements(string watermarkText, IContentElementsEnumerator elementsContainer)
+        {
+            foreach (var newElement in elementsContainer)
+            {
+                if (FindText(watermarkText, newElement))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }
