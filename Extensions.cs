@@ -179,7 +179,7 @@ namespace Apitron.PDF.Kit
         }
 
         /// <summary>
-        /// Adds a watermark on all pages of the specified document.
+        /// Adds a watermark to all pages of the specified document.
         /// </summary>
         /// <param name="doc">Document to process.</param>
         /// <param name="watermarkText">Watermark text.</param>
@@ -218,7 +218,7 @@ namespace Apitron.PDF.Kit
                 BorderColor = RgbColors.Red,
                 Border = new Border(borderThickness),
                 BorderRadius = 5,
-                Background = RgbColors.Pink
+                //Background = RgbColors.Pink
             };
 
             double textBlockWidth = watermarkTextBlock.Measure(doc.ResourceManager) + totalAddedSpace;
@@ -234,7 +234,7 @@ namespace Apitron.PDF.Kit
             // add annotations to every page
             foreach (Page page in doc.Pages)
             {
-                WatermarkAnnotation watermarkAnnotation = CreateWatermarkAnnotation(page.Boundary.MediaBox, watermarkContent,true);
+                WatermarkAnnotation watermarkAnnotation = CreateWatermarkAnnotation(page.Boundary.MediaBox, watermarkContent, true);
                 doc.ResourceManager.RegisterResource(watermarkAnnotation.Watermark);
                 page.Annotations.Add(watermarkAnnotation);
             }
