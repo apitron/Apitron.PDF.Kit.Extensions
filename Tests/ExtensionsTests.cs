@@ -99,6 +99,54 @@ namespace Apitron.PDF.Kit.Tests
                 }
             }
         }
+        [Test]
+        public void SignAllWithText()
+        {
+            string outputFileName = GetFileNameBasedOnCaller();
+            string signatureFieldName = string.Empty;
+
+            using (Stream inputStream = File.Open("../../data/letter_unsigned.pdf", FileMode.Open),certStream = File.Open("../../data/johndoe.pfx",FileMode.Open), outputStream = File.Create(outputFileName))
+            {
+                using (FixedDocument doc = new FixedDocument(inputStream))
+                {
+                    signatureFieldName = doc.Sign(certStream, "password","John Doe,\r\n(click to view signature details)",
+                        new Boundary(90, 140, 250, 180), 0,doc.Pages.Count-1, (Stream)outputStream);
+                }
+            }
+
+            using (Stream inputStream = File.Open(outputFileName, FileMode.Open))
+            {
+                using (FixedDocument doc = new FixedDocument(inputStream))
+                {
+                    SignatureField signatureField = (SignatureField)doc.AcroForm[signatureFieldName];
+
+                    // check the signature
+                    Assert.IsTrue(signatureField.IsSigned && signatureField.IsValid);
+
+                    string signatureViewId = signatureField.Views[0].Identity;
+
+                    // check that we have signature view placed on all pages
+                    for (int i = 0; i < doc.Pages.Count; ++i)
+                    {
+                        bool annotationFound = false;
+
+                        foreach (Annotation annotation in doc.Pages[i].Annotations)
+                        {
+                            WidgetAnnotation signatureFieldView = annotation as WidgetAnnotation;
+
+                            if ((annotationFound = (signatureFieldView != null && signatureFieldView.Identity == signatureViewId)))
+                            {
+                                break;
+                            }
+                        }
+
+                        Assert.IsTrue(annotationFound);
+                    }
+                }
+            }
+
+          //  Process.Start(outputFileName);
+        }
 
         [Test]
         public void SignAll()

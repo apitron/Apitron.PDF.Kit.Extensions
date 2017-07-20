@@ -91,9 +91,9 @@ namespace Apitron.PDF.Kit
                 throw new ArgumentNullException(nameof(doc));
             }
 
-            if (string.IsNullOrEmpty(pathToSigningCertificate))
+            if (!File.Exists(pathToSigningCertificate))
             {
-                throw new ArgumentException("Value cannot be null or empty.", nameof(pathToSigningCertificate));
+                throw new FileNotFoundException("File not found", nameof(pathToSigningCertificate));
             }
 
             if (certPassword == null)
@@ -101,9 +101,9 @@ namespace Apitron.PDF.Kit
                 throw new ArgumentNullException(nameof(certPassword));
             }
 
-            if (string.IsNullOrEmpty(pathToSignatureImage))
+            if (!File.Exists(pathToSignatureImage))
             {
-                throw new ArgumentException("Value cannot be null or empty.", nameof(pathToSignatureImage));
+                throw new FileNotFoundException("File not found", nameof(pathToSignatureImage));
             }
 
             if (signatureBoundary == null)
@@ -111,19 +111,181 @@ namespace Apitron.PDF.Kit
                 throw new ArgumentNullException(nameof(signatureBoundary));
             }
 
-            string imageId = Guid.NewGuid().ToString("N");
-            string signatureFieldId = Guid.NewGuid().ToString("N");
+            using (
+                Stream certificateData = File.OpenRead(pathToSigningCertificate),
+                    signatureImageData = File.OpenRead(pathToSignatureImage), outputStream = !string.IsNullOrEmpty(outputFilePath) ? File.Create(outputFilePath):null)
+            {
+                return Sign(doc, certificateData, certPassword, signatureImageData, signatureBoundary, signaturePageIndexStart,
+                    signaturePageIndexEnd, outputStream);
+            }
+        }
 
-            // register signature image resource
-            doc.ResourceManager.RegisterResource(new Image(imageId, pathToSignatureImage));
+        /// <summary>
+        /// Signs the range of document pages using given certificate and signature image.
+        /// </summary>
+        /// <param name="doc">Document to sign.</param>
+        /// <param name="signingCertificate">Signing certificate's data stream.</param>
+        /// <param name="certPassword">Certificate's password.</param>
+        /// <param name="signatureText">The text of the signature.</param>
+        /// <param name="signatureBoundary">Visual signature boundaries.</param>
+        /// <param name="signaturePageIndexStart">The index of the first page to sign.</param>
+        /// <param name="signaturePageIndexEnd">The index of the last page to sign.</param>
+        /// <param name="outputStream">Output stream, optional. If not set, incremental save will be performed.</param>
+        /// <returns>Identifier assigned to the created signature field. Using this id you can find this field in doc's AcroForm dictionary.</returns>
+        public static string Sign(this FixedDocument doc, Stream signingCertificate,
+            string certPassword, string signatureText, Boundary signatureBoundary,
+            int signaturePageIndexStart = 0, int signaturePageIndexEnd = 0, Stream outputStream = null)
+        {
+            if (doc == null)
+            {
+                throw new ArgumentNullException(nameof(doc));
+            }
+
+            if (signingCertificate == null)
+            {
+                throw new ArgumentNullException(nameof(signingCertificate));
+            }
+
+            if (certPassword == null)
+            {
+                throw new ArgumentNullException(nameof(certPassword));
+            }
+
+            if (signatureBoundary == null)
+            {
+                throw new ArgumentNullException(nameof(signatureBoundary));
+            }
+
+            if (signaturePageIndexStart < 0 || signaturePageIndexStart > doc.Pages.Count - 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(signaturePageIndexStart));
+            }
+
+            if (signaturePageIndexEnd < signaturePageIndexStart || signaturePageIndexEnd > doc.Pages.Count - 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(signaturePageIndexEnd));
+            }
+
+            // create textual resource
+            FixedContent signatureTextXObject = new FixedContent(Guid.NewGuid().ToString("N"), new Boundary(0,0,signatureBoundary.Width,signatureBoundary.Height));
+
+            Section section = new Section();
+
+            if (!string.IsNullOrEmpty(signatureText))
+            {
+                var newLineString = "<br/>";
+                signatureText = signatureText.Replace("\r\n", newLineString)
+                        .Replace("\n", newLineString)
+                        .Replace("\r", newLineString);
+
+                foreach (ContentElement contentElement in ContentElement.FromMarkup(signatureText))
+                {
+                    contentElement.Font = new Font("TimesNewRoman", 12);
+                    section.Add(contentElement);
+                }
+
+                signatureTextXObject.Content.AppendContentElement(section, signatureBoundary.Width, signatureBoundary.Height);
+            }
+
+            doc.ResourceManager.RegisterResource(signatureTextXObject);
+
+            string signatureFieldId = Guid.NewGuid().ToString("N");
 
             // create signature field and initialize it using a stored
             // password protected certificate
             SignatureField signatureField = new SignatureField(signatureFieldId);
-            using (Stream signatureDataStream = File.OpenRead(pathToSigningCertificate))
+            signatureField.Signature = Signature.Create(new Pkcs12Store(signingCertificate, certPassword));
+
+            // add signature field to a document
+            doc.AcroForm.Fields.Add(signatureField);
+
+            // create signature view using the image resource
+            SignatureFieldView signatureView = new SignatureFieldView(signatureField, signatureBoundary);
+
+            signatureView.ViewSettings.Graphic = Graphic.XObject;
+            signatureView.ViewSettings.GraphicResourceID = signatureTextXObject.ID;
+            signatureView.ViewSettings.Description = Description.None;
+
+            // add view to pages' annotations
+            for (int i = signaturePageIndexStart; i <= signaturePageIndexEnd; ++i)
             {
-                signatureField.Signature = Signature.Create(new Pkcs12Store(signatureDataStream, certPassword));
+                doc.Pages[i].Annotations.Add(signatureView);
             }
+
+            // save to specified file or do an incremental update
+            if (outputStream != null)
+            {
+                doc.Save(outputStream);
+            }
+            else
+            {
+                doc.Save();
+            }
+
+            return signatureFieldId;
+        }
+
+        /// <summary>
+        /// Signs the range of document pages using given certificate and signature image.
+        /// </summary>
+        /// <param name="doc">Document to sign.</param>
+        /// <param name="signingCertificate">Signing certificate's data stream.</param>
+        /// <param name="certPassword">Certificate's password.</param>
+        /// <param name="signatureImage">Image stream that will represent the signature visually on page.</param>
+        /// <param name="signatureBoundary">Visual signature boundaries.</param>
+        /// <param name="signaturePageIndexStart">The index of the first page to sign.</param>
+        /// <param name="signaturePageIndexEnd">The index of the last page to sign.</param>
+        /// <param name="outputStream">Output stream, optional. If not set, incremental save will be performed.</param>
+        /// <returns>Identifier assigned to the created signature field. Using this id you can find this field in doc's AcroForm dictionary.</returns>
+        public static string Sign(this FixedDocument doc, Stream signingCertificate,
+            string certPassword, Stream signatureImage, Boundary signatureBoundary,
+            int signaturePageIndexStart = 0, int signaturePageIndexEnd = 0, Stream outputStream = null)
+        {
+            if (doc == null)
+            {
+                throw new ArgumentNullException(nameof(doc));
+            }
+
+            if (signingCertificate==null)
+            {
+                throw new ArgumentNullException(nameof(signingCertificate));
+            }
+
+            if (certPassword == null)
+            {
+                throw new ArgumentNullException(nameof(certPassword));
+            }
+
+            if (signatureImage==null)
+            {
+                throw new ArgumentNullException(nameof(signatureImage));
+            }
+
+            if (signatureBoundary == null)
+            {
+                throw new ArgumentNullException(nameof(signatureBoundary));
+            }
+
+            if (signaturePageIndexStart < 0 || signaturePageIndexStart > doc.Pages.Count-1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(signaturePageIndexStart));
+            }
+
+            if (signaturePageIndexEnd < signaturePageIndexStart || signaturePageIndexEnd > doc.Pages.Count - 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(signaturePageIndexEnd));
+            }
+
+            string imageId = Guid.NewGuid().ToString("N");
+            string signatureFieldId = Guid.NewGuid().ToString("N");
+
+            // register signature image resource
+            doc.ResourceManager.RegisterResource(new Image(imageId, signatureImage));
+
+            // create signature field and initialize it using a stored
+            // password protected certificate
+            SignatureField signatureField = new SignatureField(signatureFieldId);
+            signatureField.Signature = Signature.Create(new Pkcs12Store(signingCertificate, certPassword));
 
             // add signature field to a document
             doc.AcroForm.Fields.Add(signatureField);
@@ -141,12 +303,9 @@ namespace Apitron.PDF.Kit
             }
 
             // save to specified file or do an incremental update
-            if (!string.IsNullOrEmpty(outputFilePath))
+            if (outputStream != null)
             {
-                using (Stream outputStream = File.Create(outputFilePath))
-                {
-                    doc.Save(outputStream);
-                }
+                doc.Save(outputStream);
             }
             else
             {
@@ -174,7 +333,7 @@ namespace Apitron.PDF.Kit
             }
             else
             {
-                WatermarkText(doc, watermarkText, outputFilePath);
+                WatermarkText(doc, watermarkText,(Stream)null);
             }
         }
 
@@ -218,7 +377,7 @@ namespace Apitron.PDF.Kit
                 BorderColor = RgbColors.Red,
                 Border = new Border(borderThickness),
                 BorderRadius = 5,
-                //Background = RgbColors.Pink
+                Background = RgbColors.Pink
             };
 
             double textBlockWidth = watermarkTextBlock.Measure(doc.ResourceManager) + totalAddedSpace;
